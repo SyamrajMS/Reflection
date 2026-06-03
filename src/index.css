@@ -50,7 +50,7 @@ button {
   height: min(920px, calc(100svh - 40px));
   min-height: 620px;
   display: grid;
-  grid-template-rows: 64px minmax(0, 1fr) 68px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: #efeae2;
   border: 1px solid rgba(17, 27, 33, 0.12);
@@ -71,6 +71,36 @@ button {
   padding: 10px 14px;
   color: #fff;
   background: #008069;
+}
+
+.search-filters {
+  display: flex;
+  overflow-x: auto;
+  gap: 8px;
+  padding: 8px 0 4px;
+  margin-top: 4px;
+  scrollbar-width: none;
+}
+.search-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.search-filter-btn {
+  padding: 4px 12px;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 16px;
+  color: white;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.search-filter-btn.active {
+  background: white;
+  color: #008069;
+  font-weight: 600;
 }
 
 .avatar {
@@ -337,6 +367,7 @@ button {
   overflow-wrap: anywhere;
   user-select: none;
   -webkit-user-select: none;
+  padding-right: 18px;
 }
 
 .message-text.emoji-only {

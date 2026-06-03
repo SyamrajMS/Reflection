@@ -16,7 +16,17 @@ export function AudioPlayer({ src }) {
     }
 
     const handleLoadedMetadata = () => {
-      setDuration(audio.duration)
+      if (audio.duration === Infinity) {
+        audio.currentTime = 1e101
+        audio.ontimeupdate = () => {
+          audio.ontimeupdate = null
+          setDuration(audio.duration)
+          audio.currentTime = 0
+          setCurrentTime(0)
+        }
+      } else {
+        setDuration(audio.duration)
+      }
     }
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime)

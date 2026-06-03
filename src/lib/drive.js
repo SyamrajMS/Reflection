@@ -1,5 +1,5 @@
 import { serializeMessage } from './db'
-import { deriveKey, encryptData, decryptData } from './crypto'
+import { encryptData, decryptData } from './crypto'
 
 const DISCOVERY_SCOPE = 'https://www.googleapis.com/auth/drive.appdata'
 const STATE_FILE_NAME = 'journal_state.json'
@@ -93,8 +93,7 @@ export async function downloadState(sessionKey) {
   const rawBlob = await response.blob()
   
   try {
-    const cryptoKey = await deriveKey(sessionKey)
-    return await decryptData(rawBlob, cryptoKey, 'json')
+    return await decryptData(rawBlob, sessionKey, 'json')
   } catch (err) {
     // Fallback if older plain JSON backup
     const text = await rawBlob.text()
@@ -107,8 +106,7 @@ export async function downloadMedia(fileId, sessionKey) {
   const rawBlob = await response.blob()
   
   try {
-    const cryptoKey = await deriveKey(sessionKey)
-    return await decryptData(rawBlob, cryptoKey, 'blob')
+    return await decryptData(rawBlob, sessionKey, 'blob')
   } catch (err) {
     return rawBlob
   }
@@ -144,8 +142,7 @@ async function uploadMultipart({ fileId, metadata, body, mimeType }) {
 export async function uploadMedia(message, sessionKey) {
   if (!message.blob) return message.driveFileId
 
-  const cryptoKey = await deriveKey(sessionKey)
-  const encryptedBlob = await encryptData(message.blob, cryptoKey)
+  const encryptedBlob = await encryptData(message.blob, sessionKey)
 
   const uploaded = await uploadMultipart({
     fileId: message.driveFileId,
@@ -171,8 +168,7 @@ export async function uploadState(messages, sessionKey) {
     messages: messages.map(serializeMessage).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)),
   }
 
-  const cryptoKey = await deriveKey(sessionKey)
-  const encryptedBlob = await encryptData(payload, cryptoKey)
+  const encryptedBlob = await encryptData(payload, sessionKey)
 
   return uploadMultipart({
     fileId: stateFile?.id,

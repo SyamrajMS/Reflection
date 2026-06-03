@@ -34,11 +34,12 @@ import {
   makeObjectUrl,
   supportsVoiceRecording,
 } from './lib/media'
+import { connectDrive, downloadMedia, downloadState, isDriveConnected, uploadMedia, uploadState } from './lib/drive'
 import { hasPin, setPin, verifyPin } from './lib/pin'
 import { AudioPlayer } from './components/AudioPlayer'
 
 const USER_NAME = 'My Journal'
-const QUICK_REACTIONS = ['💡', '❤️', '👍', '😂', '😢', '🙏']
+const QUICK_REACTIONS = ['💡', '❤️', '👍', '😢']
 const emojiOnlyRegex = /^[\p{Emoji}\s]+$/u
 const isEmojiOnly = (text) => text?.trim().length > 0 && emojiOnlyRegex.test(text.trim())
 
@@ -70,6 +71,7 @@ function App() {
   const [searchMode, setSearchMode] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchReactionFilter, setSearchReactionFilter] = useState(null)
+  const [searchEmojiPickerOpen, setSearchEmojiPickerOpen] = useState(false)
   const [activeDropdown, setActiveDropdown] = useState(null)
   const [activeReactionMenu, setActiveReactionMenu] = useState(null)
   const [reactionPickerOpen, setReactionPickerOpen] = useState(null)
@@ -121,6 +123,9 @@ function App() {
       if (reactionPickerOpen && emojiPanelRef.current && !emojiPanelRef.current.contains(event.target)) {
         setReactionPickerOpen(null)
       }
+      if (searchEmojiPickerOpen && emojiPanelRef.current && !emojiPanelRef.current.contains(event.target) && !event.target.closest('.search-filter-btn')) {
+        setSearchEmojiPickerOpen(false)
+      }
       if (activeDropdown && !event.target.closest('.message-dropdown-container')) {
         setActiveDropdown(null)
       }
@@ -130,7 +135,7 @@ function App() {
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [emojiOpen, activeDropdown, activeReactionMenu, reactionPickerOpen])
+  }, [emojiOpen, activeDropdown, activeReactionMenu, reactionPickerOpen, searchEmojiPickerOpen])
 
   const groupedMessages = useMemo(() => {
     const groups = groupMessagesByDate(messages)
@@ -324,11 +329,49 @@ function App() {
       let cloudMessages = state?.messages || []
 
       const rows = await db.messages.orderBy('createdAt').toArray()
-      const pendingMessages = rows.filter(m => m.syncStatus === 'pending')
+      const localMap = new Map(rows.map(m => [m.id, m]))
+
+      let downloadedCount = 0
+      for (const cm of cloudMessages) {
+        let finalCm = { ...cm, syncStatus: 'synced' }
+        if (!localMap.has(cm.id)) {
+          if ((cm.type === 'image' || cm.type === 'audio') && cm.driveFileId) {
+             setSyncLabel('Downloading media...')
+             const rawBlob = await downloadMedia(cm.driveFileId, sessionKey)
+             if (rawBlob) finalCm.blob = rawBlob
+          }
+          await saveMessage(finalCm)
+          downloadedCount++
+        } else {
+          const localMessage = localMap.get(cm.id)
+          if (new Date(cm.updatedAt) > new Date(localMessage.updatedAt) && localMessage.syncStatus !== 'pending') {
+            await updateMessage(cm.id, finalCm)
+            downloadedCount++
+          }
+        }
+      }
+
+      for (const m of rows) {
+        if ((m.type === 'image' || m.type === 'audio') && m.driveFileId && !m.blob) {
+          setSyncLabel('Fetching missing media...')
+          const rawBlob = await downloadMedia(m.driveFileId, sessionKey)
+          if (rawBlob) {
+            await updateMessage(m.id, { blob: rawBlob })
+            downloadedCount++
+          }
+        }
+      }
+
+      const updatedRows = await db.messages.orderBy('createdAt').toArray()
+      const pendingMessages = updatedRows.filter(m => m.syncStatus === 'pending')
 
       if (pendingMessages.length === 0) {
+        const finalRows = await db.messages.orderBy('createdAt').toArray()
+        revokeUrls(messages)
+        setMessages(finalRows.map(normalizeMessage))
+
         setSyncState('online')
-        setSyncLabel('Everything is up to date')
+        setSyncLabel(downloadedCount > 0 ? `Downloaded ${downloadedCount} items` : 'Everything is up to date')
         return
       }
 
@@ -347,17 +390,16 @@ function App() {
         i++
       }
 
-      // Merge cloud messages with newly uploaded
       const allMessages = [...cloudMessages.filter(cm => !uploaded.find(u => u.id === cm.id)), ...uploaded]
 
       setSyncLabel('Encrypting and saving backup...')
       await uploadState(allMessages, sessionKey)
-      
-      const newRows = await db.messages.orderBy('createdAt').toArray()
+
+      const finalRows = await db.messages.orderBy('createdAt').toArray()
       revokeUrls(messages)
-      setMessages(newRows.map(normalizeMessage))
+      setMessages(finalRows.map(normalizeMessage))
       setSyncState('online')
-      setSyncLabel(`Backed up ${uploaded.length} new items`)
+      setSyncLabel(`Synced: ${downloadedCount} down, ${uploaded.length} up`)
     } catch (error) {
       setSyncState('error')
       setSyncLabel(error.message)
@@ -395,6 +437,18 @@ function App() {
                     onClick={() => setSearchReactionFilter(emoji === searchReactionFilter ? null : emoji)}
                   >{emoji}</button>
                 ))}
+                {searchReactionFilter && !QUICK_REACTIONS.includes(searchReactionFilter) && (
+                  <button
+                    className="search-filter-btn active"
+                    onClick={() => setSearchReactionFilter(null)}
+                  >{searchReactionFilter}</button>
+                )}
+                <button
+                  className={`search-filter-btn ${searchEmojiPickerOpen ? 'active' : ''}`}
+                  onClick={() => setSearchEmojiPickerOpen(!searchEmojiPickerOpen)}
+                >
+                  <Plus size={14} style={{ display: 'inline' }} />
+                </button>
               </div>
             </>
           ) : (
@@ -504,7 +558,7 @@ function App() {
         </div>
 
         <form className="composer" onSubmit={handleSend}>
-          {(emojiOpen || reactionPickerOpen) ? (
+          {(emojiOpen || reactionPickerOpen || searchEmojiPickerOpen) ? (
             <div className="emoji-panel" ref={emojiPanelRef}>
               <EmojiPicker
                 height={360}
@@ -514,6 +568,9 @@ function App() {
                 onEmojiClick={(emoji) => {
                   if (reactionPickerOpen) {
                     handleReact(reactionPickerOpen, emoji.emoji)
+                  } else if (searchEmojiPickerOpen) {
+                    setSearchReactionFilter(emoji.emoji)
+                    setSearchEmojiPickerOpen(false)
                   } else {
                     setDraft((value) => `${value}${emoji.emoji}`)
                   }
@@ -566,6 +623,7 @@ function App() {
             <button
               className={`send-button ${recording ? 'recording' : ''}`}
               type="button"
+              style={{ touchAction: 'none' }}
               aria-label={recording ? 'Stop recording' : 'Hold to record voice note'}
               onPointerDown={startRecording}
               onPointerUp={stopRecording}
@@ -600,6 +658,21 @@ function App() {
             />
             {pinError ? <span className="pin-error">{pinError}</span> : null}
             <button type="submit">{pinReady ? 'Unlock' : 'Save PIN'}</button>
+            {pinReady && (
+              <button 
+                type="button" 
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to permanently delete all local messages and reset the app? This cannot be undone!")) {
+                    localStorage.clear();
+                    indexedDB.deleteDatabase('reflection-journal');
+                    window.location.reload();
+                  }
+                }}
+                style={{ marginTop: '16px', background: 'transparent', color: '#d32f2f', border: '1px solid #d32f2f' }}
+              >
+                Reset App & Delete Data
+              </button>
+            )}
           </form>
         </section>
       ) : null}
