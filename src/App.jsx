@@ -661,8 +661,17 @@ function App() {
             {pinReady && (
               <button 
                 type="button" 
-                onClick={() => {
-                  if (window.confirm("Are you sure you want to permanently delete all local messages and reset the app? This cannot be undone!")) {
+                onClick={async () => {
+                  const input = window.prompt("Enter your PIN to confirm you want to wipe this app locally:");
+                  if (!input) return;
+                  
+                  const isValid = await verifyPin(input);
+                  if (!isValid) {
+                    alert("Incorrect PIN. Reset aborted.");
+                    return;
+                  }
+                  
+                  if (window.confirm("PIN verified. Are you absolutely sure you want to delete all local messages and reset the app?")) {
                     localStorage.clear();
                     indexedDB.deleteDatabase('reflection-journal');
                     window.location.reload();
